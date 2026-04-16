@@ -1,13 +1,15 @@
 document.addEventListener('DOMContentLoaded', () => {
     const board = document.getElementById('board');
     const svgOverlay = document.getElementById('lines-overlay');
-    const playerToken = document.getElementById('player');
+    const tokens = [document.getElementById('player0'), document.getElementById('player1')];
     const diceElement = document.getElementById('dice');
     const rollBtn = document.getElementById('roll-btn');
     const restartBtn = document.getElementById('restart-btn');
     const statusMessage = document.getElementById('status-message');
 
-    let currentPos = 0;
+    // State Variables for 2 Players
+    let positions = [0, 0]; 
+    let currentPlayer = 0; // 0 for Player 1, 1 for Player 2
     let isMoving = false;
     let audioCtx = null;
 
@@ -86,9 +88,12 @@ document.addEventListener('DOMContentLoaded', () => {
         snakes.forEach(s => drawLine(s.start, s.end, '#ef4444', true));
         ladders.forEach(l => drawLine(l.start, l.end, '#10b981', false));
         
-        if (currentPos > 0) updatePlayerVisual(currentPos);
+        // Re-draw player positions if board resizes
+        if (positions[0] > 0) updatePlayerVisual(0, positions[0]);
+        if (positions[1] > 0) updatePlayerVisual(1, positions[1]);
     }
 
+    // Linear Search for Snakes
     function linearSearchSnake(pos) {
         for (let i = 0; i < snakes.length; i++) {
             if (snakes[i].start === pos) return snakes[i].end;
@@ -96,6 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return -1;
     }
 
+    // Binary Search for Ladders
     function binarySearchLadder(pos) {
         let left = 0;
         let right = ladders.length - 1;
@@ -154,29 +160,41 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function updatePlayerVisual(pos) {
+    function updatePlayerVisual(playerIndex, pos) {
+        const token = tokens[playerIndex];
         if (pos === 0) {
-            playerToken.style.transform = `translate(-100px, -100px)`;
+            token.style.transform = `translate(-100px, -100px)`;
             return;
         }
         const cell = document.querySelector(`[data-num="${pos}"]`);
         const boardRect = board.getBoundingClientRect();
         const cellRect = cell.getBoundingClientRect();
 
-        const x = cellRect.left - boardRect.left + (cellRect.width / 2);
-        const y = cellRect.top - boardRect.top + (cellRect.height / 2);
+        let x = cellRect.left - boardRect.left + (cellRect.width / 2);
+        let y = cellRect.top - boardRect.top + (cellRect.height / 2);
 
-        const tokenRect = playerToken.getBoundingClientRect();
-        playerToken.style.transform = `translate(${x - (tokenRect.width / 2)}px, ${y - (tokenRect.height / 2)}px)`;
+        // Apply a slight visual offset so tokens don't overlap entirely if on the same cell
+        const offset = playerIndex === 0 ? -4 : 4; 
+
+        const tokenRect = token.getBoundingClientRect();
+        token.style.transform = `translate(${(x + offset) - (tokenRect.width / 2)}px, ${(y + offset) - (tokenRect.height / 2)}px)`;
+    }
+
+    function updateStatusUI() {
+        const pName = currentPlayer === 0 ? "Player 1 (Blue)" : "Player 2 (Red)";
+        const color = currentPlayer === 0 ? "var(--accent-blue)" : "var(--accent-red)";
+        statusMessage.style.color = color;
+        statusMessage.textContent = `${pName}'s Turn - Roll!`;
+        rollBtn.style.backgroundColor = color;
     }
 
     async function handleTurn() {
-        if (isMoving || currentPos === 100) return;
+        if (isMoving || positions[0] === 100 || positions[1] === 100) return;
         isMoving = true;
         rollBtn.disabled = true;
 
         statusMessage.style.color = 'var(--text-primary)';
-        statusMessage.textContent = 'Rolling...';
+        statusMessage.textContent = `Player ${currentPlayer + 1} is rolling...`;
         diceElement.classList.add('rolling');
         
         await new Promise(r => setTimeout(r, 600));
@@ -185,22 +203,29 @@ document.addEventListener('DOMContentLoaded', () => {
         diceElement.classList.remove('rolling');
         diceElement.textContent = roll;
 
+        let currentPos = positions[currentPlayer];
+
+        // Check exact win condition
         if (currentPos + roll > 100) {
-            statusMessage.textContent = `You need exactly ${100 - currentPos} to win!`;
-            isMoving = false;
-            rollBtn.disabled = false;
+            statusMessage.textContent = `Needs exactly ${100 - currentPos} to win! Turn skipped.`;
+            await new Promise(r => setTimeout(r, 1500));
+            switchTurn();
             return;
         }
 
-        statusMessage.textContent = `Moved ${roll} spaces.`;
+        statusMessage.textContent = `Player ${currentPlayer + 1} moved ${roll} spaces.`;
 
+        // Move step by step
         for (let i = 1; i <= roll; i++) {
             currentPos++;
-            updatePlayerVisual(currentPos);
+            updatePlayerVisual(currentPlayer, currentPos);
             playSound('move');
             await new Promise(r => setTimeout(r, 300));
         }
 
+        positions[currentPlayer] = currentPos;
+
+        // Check Snakes and Ladders
         const snakeDest = linearSearchSnake(currentPos);
         const ladderDest = binarySearchLadder(currentPos);
 
@@ -209,33 +234,44 @@ document.addEventListener('DOMContentLoaded', () => {
             statusMessage.textContent = 'Oh no! Bitten by a snake!';
             playSound('snake');
             await new Promise(r => setTimeout(r, 500));
-            currentPos = snakeDest;
-            updatePlayerVisual(currentPos);
+            positions[currentPlayer] = snakeDest;
+            updatePlayerVisual(currentPlayer, positions[currentPlayer]);
         } else if (ladderDest !== -1) {
             statusMessage.style.color = 'var(--accent-green)';
             statusMessage.textContent = 'Awesome! Climbed a ladder!';
             playSound('ladder');
             await new Promise(r => setTimeout(r, 500));
-            currentPos = ladderDest;
-            updatePlayerVisual(currentPos);
+            positions[currentPlayer] = ladderDest;
+            updatePlayerVisual(currentPlayer, positions[currentPlayer]);
         }
 
-        if (currentPos === 100) {
-            statusMessage.style.color = 'var(--accent-blue)';
-            statusMessage.textContent = '🎉 YOU WIN! 🎉';
+        // Check for Win
+        if (positions[currentPlayer] === 100) {
+            statusMessage.style.color = currentPlayer === 0 ? 'var(--accent-blue)' : 'var(--accent-red)';
+            statusMessage.textContent = `🎉 PLAYER ${currentPlayer + 1} WINS! 🎉`;
             playSound('win');
         } else {
-            rollBtn.disabled = false;
+            await new Promise(r => setTimeout(r, 1000));
+            switchTurn();
         }
+    }
+
+    function switchTurn() {
+        currentPlayer = currentPlayer === 0 ? 1 : 0;
+        updateStatusUI();
         isMoving = false;
+        rollBtn.disabled = false;
     }
 
     function resetGame() {
-        currentPos = 0;
+        positions = [0, 0];
+        currentPlayer = 0;
         diceElement.textContent = '🎲';
-        statusMessage.style.color = 'var(--accent-green)';
-        statusMessage.textContent = 'Roll the dice to start the game!';
-        updatePlayerVisual(0);
+        
+        updatePlayerVisual(0, 0);
+        updatePlayerVisual(1, 0);
+        
+        updateStatusUI();
         rollBtn.disabled = false;
         isMoving = false;
     }
